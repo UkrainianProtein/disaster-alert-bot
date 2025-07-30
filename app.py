@@ -54,7 +54,7 @@ alert_state = {
     "last_general_severe_weather_post_time": 0,
 }
 
-# Cooldown period in seconds to prevent spamming chat
+# Cooldown period in seconds to prevent spamming chat for automated timers
 COOLDOWN_SECONDS = 300 # 5 minutes
 
 # --- Helper Functions for API Calls with Exponential Backoff ---
@@ -106,6 +106,7 @@ def get_earthquake_alert():
         latest_earthquake = data['features'][0]['properties']
         latest_earthquake_id = data['features'][0]['id']
 
+        # Check for new alert and cooldown for automated posts
         if latest_earthquake_id != alert_state["last_earthquake_id"] and \
            (current_time - alert_state["last_earthquake_post_time"]) > COOLDOWN_SECONDS:
             
@@ -155,6 +156,7 @@ def get_tsunami_alert():
             latest_alert = active_alerts[0]['properties']
             latest_alert_id = latest_alert.get('id')
 
+            # Check for new alert and cooldown for automated posts
             if latest_alert_id != alert_state["last_tsunami_id"] and \
                (current_time - alert_state["last_tsunami_post_time"]) > COOLDOWN_SECONDS:
                 
@@ -199,6 +201,7 @@ def get_volcano_alert():
                 # Use title as unique ID for simplicity, or generate a hash of content
                 latest_volcano_event_id = title 
 
+                # Check for new alert and cooldown for automated posts
                 if latest_volcano_event_id != alert_state["last_volcano_event"] and \
                    (current_time - alert_state["last_volcano_post_time"]) > COOLDOWN_SECONDS:
                     
@@ -273,6 +276,7 @@ def get_flood_alert():
         latest_flood = alerts[0]
         latest_flood_id = latest_flood['id']
 
+        # Check for new alert and cooldown for automated posts
         if latest_flood_id != alert_state["last_flood_id"] and \
            (current_time - alert_state["last_flood_post_time"]) > COOLDOWN_SECONDS:
             
@@ -299,6 +303,7 @@ def get_tropical_cyclone_alert():
         latest_tc = alerts[0]
         latest_tc_id = latest_tc['id']
 
+        # Check for new alert and cooldown for automated posts
         if latest_tc_id != alert_state["last_tropical_cyclone_id"] and \
            (current_time - alert_state["last_tropical_cyclone_post_time"]) > COOLDOWN_SECONDS:
             
@@ -331,6 +336,7 @@ def get_wildfire_alert():
         latest_wildfire = data['events'][0]
         latest_wildfire_id = latest_wildfire.get('id')
 
+        # Check for new alert and cooldown for automated posts
         if latest_wildfire_id != alert_state["last_wildfire_id"] and \
            (current_time - alert_state["last_wildfire_post_time"]) > COOLDOWN_SECONDS:
             
@@ -360,6 +366,7 @@ def get_drought_alert():
         latest_drought = alerts[0]
         latest_drought_id = latest_drought['id']
 
+        # Check for new alert and cooldown for automated posts
         if latest_drought_id != alert_state["last_drought_id"] and \
            (current_time - alert_state["last_drought_post_time"]) > COOLDOWN_SECONDS:
             
@@ -397,19 +404,22 @@ def get_general_severe_weather_alert():
     # Get all Orange/Red alerts from GDACS
     all_gdacs_alerts = get_gdacs_alerts(alert_level_filter="Orange") + get_gdacs_alerts(alert_level_filter="Red")
     
-    # Filter out alerts already handled by dedicated endpoints (EQ, TS, FL, TC, VO, WF, DR)
-    # Note: GDACS also reports EQ, TC, FL, VO, WF, DR, so we need to avoid duplicates
-    # if those alerts are also picked up by other specific APIs.
-    # For simplicity here, we'll just look for any *new* high-level GDACS alerts.
-    
-    if all_gdacs_alerts:
+    # Filter out alerts already handled by dedicated endpoints (EQ, TC, FL, VO, WF, DR)
+    # Tsunami (TS) is handled by NWS, so we don't need to filter that from GDACS here.
+    filtered_alerts = [
+        alert for alert in all_gdacs_alerts
+        if alert['event_type'] not in ["EQ", "FL", "TC", "VO", "WF", "DR"]
+    ]
+
+    if filtered_alerts:
         # Prioritize Red alerts over Orange
-        all_gdacs_alerts.sort(key=lambda x: {"Red": 2, "Orange": 1}.get(x['alert_level'], 0), reverse=True)
+        filtered_alerts.sort(key=lambda x: {"Red": 2, "Orange": 1}.get(x['alert_level'], 0), reverse=True)
         
-        latest_alert = all_gdacs_alerts[0]
+        latest_alert = filtered_alerts[0]
         # Create a unique ID for this general alert based on its type, level, and GDACS ID
         latest_general_alert_id = f"{latest_alert['event_type']}-{latest_alert['alert_level']}-{latest_alert['id']}"
 
+        # Check for new alert and cooldown for automated posts
         if latest_general_alert_id != alert_state["last_general_severe_weather_id"] and \
            (current_time - alert_state["last_general_severe_weather_post_time"]) > COOLDOWN_SECONDS:
             
@@ -424,10 +434,81 @@ def get_general_severe_weather_alert():
     
     return ""
 
+# --- Chat Command Endpoint ---
+@app.route('/command')
+def handle_command():
+    """
+    Handles chat commands for on-demand natural disaster alerts.
+    Commands bypass the automated cooldowns.
+    Usage: YOUR_PROXY_SERVICE_URL/command?cmd=earthquake
+    """
+    command = request.args.get('cmd', '').lower()
+    
+    # Call the appropriate alert function based on the command
+    if command == 'earthquake':
+        # Temporarily set the last post time to 0 to force a check, then restore
+        original_time = alert_state["last_earthquake_post_time"]
+        alert_state["last_earthquake_post_time"] = 0
+        message = get_earthquake_alert()
+        alert_state["last_earthquake_post_time"] = original_time # Restore original time
+        return message if message else "No recent significant earthquake found."
+    
+    elif command == 'tsunami':
+        original_time = alert_state["last_tsunami_post_time"]
+        alert_state["last_tsunami_post_time"] = 0
+        message = get_tsunami_alert()
+        alert_state["last_tsunami_post_time"] = original_time
+        return message if message else "No active tsunami warnings/advisories found."
+        
+    elif command == 'volcano':
+        original_time = alert_state["last_volcano_post_time"]
+        alert_state["last_volcano_post_time"] = 0
+        message = get_volcano_alert()
+        alert_state["last_volcano_post_time"] = original_time
+        return message if message else "No recent significant volcanic activity found."
+
+    elif command == 'flood':
+        original_time = alert_state["last_flood_post_time"]
+        alert_state["last_flood_post_time"] = 0
+        message = get_flood_alert()
+        alert_state["last_flood_post_time"] = original_time
+        return message if message else "No recent significant global flood alerts found."
+
+    elif command == 'cyclone' or command == 'tropicalcyclone':
+        original_time = alert_state["last_tropical_cyclone_post_time"]
+        alert_state["last_tropical_cyclone_post_time"] = 0
+        message = get_tropical_cyclone_alert()
+        alert_state["last_tropical_cyclone_post_time"] = original_time
+        return message if message else "No active global tropical cyclone alerts found."
+
+    elif command == 'wildfire':
+        original_time = alert_state["last_wildfire_post_time"]
+        alert_state["last_wildfire_post_time"] = 0
+        message = get_wildfire_alert()
+        alert_state["last_wildfire_post_time"] = original_time
+        return message if message else "No active global wildfire alerts found."
+
+    elif command == 'drought':
+        original_time = alert_state["last_drought_post_time"]
+        alert_state["last_drought_post_time"] = 0
+        message = get_drought_alert()
+        alert_state["last_drought_post_time"] = original_time
+        return message if message else "No recent significant global drought alerts found."
+
+    elif command == 'weather' or command == 'severeweather':
+        original_time = alert_state["last_general_severe_weather_post_time"]
+        alert_state["last_general_severe_weather_post_time"] = 0
+        message = get_general_severe_weather_alert()
+        alert_state["last_general_severe_weather_post_time"] = original_time
+        return message if message else "No recent general severe weather alerts found."
+    
+    else:
+        return "Unknown command. Try !earthquake, !tsunami, !volcano, !flood, !cyclone, !wildfire, !drought, or !weather."
+
 # --- Root Endpoint (for testing the proxy itself) ---
 @app.route('/')
 def index():
-    return "Natural Disaster Chatbot Proxy is running. Endpoints: /earthquake, /tsunami, /volcano, /flood, /tropical_cyclone, /wildfire, /drought, /severe_weather_general."
+    return "Natural Disaster Chatbot Proxy is running. Endpoints: /earthquake, /tsunami, /volcano, /flood, /tropical_cyclone, /wildfire, /drought, /severe_weather_general, /command?cmd=[type]."
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
