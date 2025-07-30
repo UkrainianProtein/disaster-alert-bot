@@ -17,15 +17,16 @@ USGS_EARTHQUAKE_API = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 NWS_ALERTS_API = "https://api.weather.gov/alerts/active"
 
 # Smithsonian Global Volcanism Program (GVP) API for recent activity (XML Feed)
-# UPDATED URL: The previous one was returning a 404.
 GVP_WEEKLY_REPORT_FEED = "https://volcano.si.edu/news/weekly_report.cfm?xml=true"
 
 # GDACS (Global Disaster Alert and Coordination System) GeoRSS Feed (XML)
-# This feed provides alerts for Earthquakes, Tropical Cyclones, Floods, Volcanoes, Wildfires, Droughts
 GDACS_ALERTS_FEED = "https://www.gdacs.org/rss.aspx?profile=ARCHIVE&fromarchive=true"
 
 # NASA EONET (Earth Observatory Natural Event Tracker) API for events like Wildfires
 EONET_API = "https://eonet.gsfc.nasa.gov/api/v3/events"
+
+# Pacific Tsunami Warning Center (PTWC) Atom Feed for global tsunami alerts
+PTWC_ATOM_FEED = "https://www.tsunami.gov/events/xml/PHEBAtom.xml"
 
 # User-Agent header is required by NWS API and good practice for others
 # IMPORTANT: Replace with your actual Twitch channel name and a contact email.
@@ -39,7 +40,7 @@ NWS_HEADERS = {
 alert_state = {
     "last_earthquake_id": None,
     "last_earthquake_post_time": 0,
-    "last_tsunami_id": None,
+    "last_tsunami_id": None, # This will now track either NWS or PTWC ID
     "last_tsunami_post_time": 0,
     "last_volcano_event": None,
     "last_volcano_post_time": 0,
@@ -53,8 +54,8 @@ alert_state = {
     "last_drought_post_time": 0,
     "last_general_severe_weather_id": None,
     "last_general_severe_weather_post_time": 0,
-    "last_all_alerts_id": None, # New ID for the consolidated alert
-    "last_all_alerts_post_time": 0, # New cooldown for the consolidated alert
+    "last_all_alerts_id": None, 
+    "last_all_alerts_post_time": 0,
 }
 
 # Cooldown period in seconds to prevent spamming chat for automated timers
@@ -132,28 +133,30 @@ def get_earthquake_alert():
         return message
     return ""
 
-# --- Tsunami Alert Endpoint (NWS for US/Territories) ---
+# --- Tsunami Alert Endpoint (NWS for US/Territories + PTWC Global) ---
 def _get_tsunami_alert_message():
-    """Internal function to get tsunami alert message without cooldown logic."""
-    params = {
+    """
+    Internal function to get tsunami alert message without cooldown logic.
+    Prioritizes NWS alerts, then checks PTWC global alerts.
+    """
+    # 1. Check NWS Alerts (US and territories)
+    params_nws = {
         "event": "Tsunami Warning,Tsunami Advisory"
     }
+    data_nws = fetch_data_with_backoff(NWS_ALERTS_API, headers=NWS_HEADERS, params=params_nws)
 
-    data = fetch_data_with_backoff(NWS_ALERTS_API, headers=NWS_HEADERS, params=params)
-
-    if data and data['features']:
+    if data_nws and data_nws['features']:
         severity_order = {"Extreme": 5, "Severe": 4, "Moderate": 3, "Minor": 2, "Unknown": 1}
-        active_alerts = sorted(
-            data['features'],
+        active_alerts_nws = sorted(
+            data_nws['features'],
             key=lambda x: severity_order.get(x['properties'].get('severity', 'Unknown'), 0),
             reverse=True
         )
 
-        if active_alerts:
-            latest_alert = active_alerts[0]['properties']
+        if active_alerts_nws:
+            latest_alert = active_alerts_nws[0]['properties']
             latest_alert_id = latest_alert.get('id')
 
-            # Ensure all potentially None fields are converted to empty strings
             headline = str(latest_alert.get('headline', 'No Headline'))
             description = str(latest_alert.get('description', ''))
             instruction = str(latest_alert.get('instruction', ''))
@@ -164,10 +167,54 @@ def _get_tsunami_alert_message():
             if len(instruction) > 100: instruction = instruction[:97] + "..."
 
             message = (
-                f"🌊 TSUNAMI ALERT! 🌊 {headline} ({area_desc}). "
+                f"🌊 TSUNAMI ALERT! (US/Territories) 🌊 {headline} ({area_desc}). "
                 f"Details: {description}. Action: {instruction}. More info: {web_link}"
             )
             return message, latest_alert_id
+
+    # 2. If no NWS alert, check PTWC Global Atom Feed
+    xml_data_ptwc = fetch_data_with_backoff(PTWC_ATOM_FEED, parser='xml')
+
+    if xml_data_ptwc:
+        try:
+            root = ET.fromstring(xml_data_ptwc)
+            atom_ns = {'atom': 'http://www.w3.org/2005/Atom'}
+            
+            # Find the latest entry
+            entry = root.find('atom:entry', atom_ns)
+            if entry is not None:
+                title_elem = entry.find('atom:title', atom_ns)
+                link_elem = entry.find('atom:link', atom_ns)
+                id_elem = entry.find('atom:id', atom_ns)
+                summary_elem = entry.find('atom:summary', atom_ns)
+                updated_elem = entry.find('atom:updated', atom_ns)
+
+                title = str(title_elem.text) if title_elem is not None else "Unknown Global Tsunami Event"
+                link = str(link_elem.get('href')) if link_elem is not None else "No link"
+                event_id = str(id_elem.text) if id_elem is not None else title # Fallback ID
+                summary = str(summary_elem.text) if summary_elem is not None else "No summary provided."
+                
+                # Format updated time if available
+                updated_time = ""
+                if updated_elem is not None and updated_elem.text:
+                    try:
+                        dt_object = datetime.datetime.fromisoformat(updated_elem.text.replace('Z', '+00:00'))
+                        updated_time = dt_object.strftime('%Y-%m-%d %H:%M:%S UTC')
+                    except ValueError:
+                        pass # Keep empty if parsing fails
+
+                if len(summary) > 200: summary = summary[:197] + "..."
+
+                message = (
+                    f"🌊 GLOBAL TSUNAMI ALERT! 🌊 {title}. "
+                    f"Summary: {summary}. Last updated: {updated_time}. More info: {link}"
+                )
+                return message, event_id
+        except ET.ParseError as e:
+            print(f"Error parsing PTWC Atom XML: {e}")
+        except AttributeError as e:
+            print(f"Error accessing XML element in PTWC feed: {e}. XML structure might have changed.")
+    
     return "", None
 
 @app.route('/tsunami')
@@ -189,17 +236,12 @@ def _get_volcano_alert_message():
     if xml_data:
         try:
             root = ET.fromstring(xml_data)
-            # The GVP XML structure has changed. We need to find the latest "item"
-            # and extract relevant details from its children.
-            # The structure is usually <rss><channel><item>...</item></channel></rss>
-            # We'll look for the first <item> as it's typically the latest.
-            item = root.find('.//item') # Searches for 'item' anywhere in the tree
+            item = root.find('.//item') 
             
             if item is not None:
-                title = item.find('title').text if item.find('title') is not None else "Unknown Volcano"
-                link = item.find('link').text if item.find('link') is not None else "No link"
+                title = str(item.find('title').text) if item.find('title') is not None else "Unknown Volcano"
+                link = str(item.find('link').text) if item.find('link') is not None else "No link"
                 
-                # Use title as unique ID for simplicity, or generate a hash of content
                 latest_volcano_event_id = title 
                 message = (
                     f"🌋 VOLCANO ALERT! 🌋 Latest activity: {title}. "
@@ -241,7 +283,7 @@ def _get_gdacs_alerts_data(event_type_filter=None, alert_level_filter=None):
                 event_type_elem = item.find('gdacs:eventtype', gdacs_ns)
                 alert_level_elem = item.find('gdacs:alertlevel', gdacs_ns)
                 
-                current_event_type = current_event_type = str(event_type_elem.text) if event_type_elem is not None else None
+                current_event_type = str(event_type_elem.text) if event_type_elem is not None else None
                 current_alert_level = str(alert_level_elem.text) if alert_level_elem is not None else None
 
                 if (event_type_filter is None or current_event_type == event_type_filter) and \
@@ -442,7 +484,7 @@ def handle_command():
 # --- Root Endpoint (for testing the proxy itself) ---
 @app.route('/')
 def index():
-    return "Natural Disaster Chatbot Proxy is running. Endpoints: /earthquake, /tsunami, /volcano, /flood, /tropical_cyclone, /wildfire, /drought, /severe_weather_general, /all_alerts, /command?cmd=[type]."
+    return "Natural Disaster Chatbot Proxy is running. Endpoints: /earthquake, /tsunami, /volcano, /flood, /tropical_cyclone, /wildfire, /drought, /severe_weather_general, /command?cmd=[type]."
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
