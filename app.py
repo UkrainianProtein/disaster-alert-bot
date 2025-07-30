@@ -154,8 +154,9 @@ def _get_tsunami_alert_message():
             latest_alert_id = latest_alert.get('id')
 
             headline = latest_alert.get('headline', 'No Headline')
-            description = latest_alert.get('description', 'No description provided.')
-            instruction = latest_alert.get('instruction', 'No specific instructions. Follow local authority guidance.')
+            # Ensure description and instruction are strings, defaulting to empty string if None
+            description = latest_alert.get('description', '')
+            instruction = latest_alert.get('instruction', '')
             web_link = latest_alert.get('web', 'No additional web link.')
             area_desc = latest_alert.get('areaDesc', 'General Area')
 
@@ -414,7 +415,7 @@ def get_all_alerts():
     if msg: potential_alerts.append({"type": "earthquake", "message": msg, "id": eid, "priority": 9})
 
     # 3. Tropical Cyclones (GDACS - high impact)
-    msg, eid = _get_gdacs_alert_message("TC", None, "🌀 TROPICAL CYCLONE ALERT!", alert_level="Red")
+    msg, eid = _get_gdacs_alert_message("TC", None, "� TROPICAL CYCLONE ALERT!", alert_level="Red")
     if msg: potential_alerts.append({"type": "tropical_cyclone_red", "message": msg, "id": eid, "priority": 8})
     msg, eid = _get_gdacs_alert_message("TC", None, "🌀 TROPICAL CYCLONE ALERT!", alert_level="Orange")
     if msg: potential_alerts.append({"type": "tropical_cyclone_orange", "message": msg, "id": eid, "priority": 7})
@@ -518,3 +519,4 @@ def index():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host='0.0.0.0', port=port)
+�
