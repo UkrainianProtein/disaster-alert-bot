@@ -17,7 +17,8 @@ USGS_EARTHQUAKE_API = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 NWS_ALERTS_API = "https://api.weather.gov/alerts/active"
 
 # Smithsonian Global Volcanism Program (GVP) API for recent activity (XML Feed)
-GVP_WEEKLY_REPORT_FEED = "https://volcano.si.edu/feeds/WeeklyVolcanicActivityReport.xml"
+# UPDATED URL: The previous one was returning a 404.
+GVP_WEEKLY_REPORT_FEED = "https://volcano.si.edu/news/weekly_report.cfm?xml=true"
 
 # GDACS (Global Disaster Alert and Coordination System) GeoRSS Feed (XML)
 # This feed provides alerts for Earthquakes, Tropical Cyclones, Floods, Volcanoes, Wildfires, Droughts
@@ -187,10 +188,17 @@ def _get_volcano_alert_message():
     if xml_data:
         try:
             root = ET.fromstring(xml_data)
-            item = root.find('.//item')
+            # The GVP XML structure has changed. We need to find the latest "item"
+            # and extract relevant details from its children.
+            # The structure is usually <rss><channel><item>...</item></channel></rss>
+            # We'll look for the first <item> as it's typically the latest.
+            item = root.find('.//item') # Searches for 'item' anywhere in the tree
+            
             if item is not None:
                 title = item.find('title').text if item.find('title') is not None else "Unknown Volcano"
                 link = item.find('link').text if item.find('link') is not None else "No link"
+                
+                # Use title as unique ID for simplicity, or generate a hash of content
                 latest_volcano_event_id = title 
                 message = (
                     f"🌋 VOLCANO ALERT! 🌋 Latest activity: {title}. "
@@ -199,6 +207,8 @@ def _get_volcano_alert_message():
                 return message, latest_volcano_event_id
         except ET.ParseError as e:
             print(f"Error parsing GVP XML: {e}")
+        except AttributeError as e:
+            print(f"Error accessing XML element in GVP feed: {e}. XML structure might have changed.")
     return "", None
 
 @app.route('/volcano')
@@ -395,18 +405,18 @@ def get_all_alerts():
     # Higher priority alerts come first in this list
     potential_alerts = []
 
-    # 1. Earthquakes
-    msg, eid = _get_earthquake_alert_message()
-    if msg: potential_alerts.append({"type": "earthquake", "message": msg, "id": eid, "priority": 9})
-
-    # 2. Tsunamis (NWS - highest impact)
+    # 1. Tsunamis (NWS - highest impact)
     msg, eid = _get_tsunami_alert_message()
     if msg: potential_alerts.append({"type": "tsunami", "message": msg, "id": eid, "priority": 10})
+
+    # 2. Earthquakes
+    msg, eid = _get_earthquake_alert_message()
+    if msg: potential_alerts.append({"type": "earthquake", "message": msg, "id": eid, "priority": 9})
 
     # 3. Tropical Cyclones (GDACS - high impact)
     msg, eid = _get_gdacs_alert_message("TC", None, "🌀 TROPICAL CYCLONE ALERT!", alert_level="Red")
     if msg: potential_alerts.append({"type": "tropical_cyclone_red", "message": msg, "id": eid, "priority": 8})
-    msg, eid = _get_gdacs_alert_message("TC", None, "� TROPICAL CYCLONE ALERT!", alert_level="Orange")
+    msg, eid = _get_gdacs_alert_message("TC", None, "🌀 TROPICAL CYCLONE ALERT!", alert_level="Orange")
     if msg: potential_alerts.append({"type": "tropical_cyclone_orange", "message": msg, "id": eid, "priority": 7})
 
     # 4. Volcanoes
