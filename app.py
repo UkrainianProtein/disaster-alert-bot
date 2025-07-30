@@ -29,7 +29,7 @@ EONET_API = "https://eonet.gsfc.nasa.gov/api/v3/events"
 # User-Agent header is required by NWS API and good practice for others
 # IMPORTANT: Replace with your actual Twitch channel name and a contact email.
 NWS_HEADERS = {
-    "User-Agent": "(HammerDln, weatherbot.scowling782@passmail.net)"
+    "User-Agent": "(hammerdln, weatherbot.scowling782@passmail.net)"
 }
 
 # --- In-memory cache for last posted alerts and cooldowns ---
