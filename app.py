@@ -153,12 +153,12 @@ def _get_tsunami_alert_message():
             latest_alert = active_alerts[0]['properties']
             latest_alert_id = latest_alert.get('id')
 
-            headline = latest_alert.get('headline', 'No Headline')
-            # Ensure description and instruction are strings, defaulting to empty string if None
-            description = latest_alert.get('description', '')
-            instruction = latest_alert.get('instruction', '')
-            web_link = latest_alert.get('web', 'No additional web link.')
-            area_desc = latest_alert.get('areaDesc', 'General Area')
+            # Ensure all potentially None fields are converted to empty strings
+            headline = str(latest_alert.get('headline', 'No Headline'))
+            description = str(latest_alert.get('description', ''))
+            instruction = str(latest_alert.get('instruction', ''))
+            web_link = str(latest_alert.get('web', 'No additional web link.'))
+            area_desc = str(latest_alert.get('areaDesc', 'General Area'))
 
             if len(description) > 150: description = description[:147] + "..."
             if len(instruction) > 100: instruction = instruction[:97] + "..."
@@ -241,16 +241,16 @@ def _get_gdacs_alerts_data(event_type_filter=None, alert_level_filter=None):
                 event_type_elem = item.find('gdacs:eventtype', gdacs_ns)
                 alert_level_elem = item.find('gdacs:alertlevel', gdacs_ns)
                 
-                current_event_type = event_type_elem.text if event_type_elem is not None else None
-                current_alert_level = alert_level_elem.text if alert_level_elem is not None else None
+                current_event_type = current_event_type = str(event_type_elem.text) if event_type_elem is not None else None
+                current_alert_level = str(alert_level_elem.text) if alert_level_elem is not None else None
 
                 if (event_type_filter is None or current_event_type == event_type_filter) and \
                    (alert_level_filter is None or current_alert_level == alert_level_filter):
                     
-                    title = item.find('title').text if item.find('title') is not None else "Unknown Event"
-                    link = item.find('link').text if item.find('link') is not None else "No link"
-                    event_id = item.find('gdacs:eventid', gdacs_ns).text if item.find('gdacs:eventid', gdacs_ns) is not None else title 
-                    description = item.find('description').text if item.find('description') is not None else ""
+                    title = str(item.find('title').text) if item.find('title') is not None else "Unknown Event"
+                    link = str(item.find('link').text) if item.find('link') is not None else "No link"
+                    event_id = str(item.find('gdacs:eventid', gdacs_ns).text) if item.find('gdacs:eventid', gdacs_ns) is not None else title 
+                    description = str(item.find('description').text) if item.find('description') is not None else ""
                     
                     # Extract severity value for sorting
                     severity_value = 0
@@ -326,9 +326,9 @@ def _get_wildfire_alert_message():
 
     if data and data.get('events'):
         latest_wildfire = data['events'][0]
-        title = latest_wildfire.get('title', 'Unknown Wildfire')
-        link = latest_wildfire.get('link', 'No link')
-        latest_wildfire_id = latest_wildfire.get('id')
+        title = str(latest_wildfire.get('title', 'Unknown Wildfire'))
+        link = str(latest_wildfire.get('link', 'No link'))
+        latest_wildfire_id = str(latest_wildfire.get('id'))
         message = (
             f"🔥 WILDFIRE ALERT! 🔥 Active wildfire: {title}. "
             f"More info: {link}"
@@ -392,78 +392,6 @@ def get_general_severe_weather_alert():
         alert_state["last_general_severe_weather_post_time"] = current_time
         return message
     return ""
-
-# --- New: All Alerts Endpoint for a Single Timer ---
-@app.route('/all_alerts')
-def get_all_alerts():
-    """
-    Checks all natural disaster APIs and returns the most significant NEW alert found.
-    Manages its own cooldown to prevent spam.
-    """
-    current_time = time.time()
-
-    # Prioritized list of alert messages and their unique IDs
-    # Higher priority alerts come first in this list
-    potential_alerts = []
-
-    # 1. Tsunamis (NWS - highest impact)
-    msg, eid = _get_tsunami_alert_message()
-    if msg: potential_alerts.append({"type": "tsunami", "message": msg, "id": eid, "priority": 10})
-
-    # 2. Earthquakes
-    msg, eid = _get_earthquake_alert_message()
-    if msg: potential_alerts.append({"type": "earthquake", "message": msg, "id": eid, "priority": 9})
-
-    # 3. Tropical Cyclones (GDACS - high impact)
-    msg, eid = _get_gdacs_alert_message("TC", None, "� TROPICAL CYCLONE ALERT!", alert_level="Red")
-    if msg: potential_alerts.append({"type": "tropical_cyclone_red", "message": msg, "id": eid, "priority": 8})
-    msg, eid = _get_gdacs_alert_message("TC", None, "🌀 TROPICAL CYCLONE ALERT!", alert_level="Orange")
-    if msg: potential_alerts.append({"type": "tropical_cyclone_orange", "message": msg, "id": eid, "priority": 7})
-
-    # 4. Volcanoes
-    msg, eid = _get_volcano_alert_message()
-    if msg: potential_alerts.append({"type": "volcano", "message": msg, "id": eid, "priority": 6})
-
-    # 5. Floods (GDACS)
-    msg, eid = _get_gdacs_alert_message("FL", None, "⚠️ FLOOD ALERT!", alert_level="Red")
-    if msg: potential_alerts.append({"type": "flood_red", "message": msg, "id": eid, "priority": 5})
-    msg, eid = _get_gdacs_alert_message("FL", None, "⚠️ FLOOD ALERT!", alert_level="Orange")
-    if msg: potential_alerts.append({"type": "flood_orange", "message": msg, "id": eid, "priority": 4})
-
-    # 6. Wildfires (NASA EONET)
-    msg, eid = _get_wildfire_alert_message()
-    if msg: potential_alerts.append({"type": "wildfire", "message": msg, "id": eid, "priority": 3})
-
-    # 7. General Severe Weather (GDACS - catch-all)
-    msg, eid = _get_general_severe_weather_alert_message()
-    if msg: potential_alerts.append({"type": "general_severe_weather", "message": msg, "id": eid, "priority": 2})
-
-    # 8. Droughts (GDACS - lowest priority for immediate alerts)
-    msg, eid = _get_gdacs_alert_message("DR", None, "🏜️ DROUGHT ALERT!", alert_level="Orange")
-    if msg: potential_alerts.append({"type": "drought", "message": msg, "id": eid, "priority": 1})
-
-
-    # Sort by priority (highest first)
-    potential_alerts.sort(key=lambda x: x['priority'], reverse=True)
-
-    if potential_alerts:
-        # Get the highest priority alert
-        top_alert = potential_alerts[0]
-        
-        # Create a unique ID for the combined alert to track its state
-        # This ID combines the type and the specific event ID
-        combined_alert_id = f"{top_alert['type']}-{top_alert['id']}"
-
-        # Check if this combined alert is new and if the general cooldown has passed
-        if combined_alert_id != alert_state["last_all_alerts_id"] and \
-           (current_time - alert_state["last_all_alerts_post_time"]) > COOLDOWN_SECONDS:
-            
-            alert_state["last_all_alerts_id"] = combined_alert_id
-            alert_state["last_all_alerts_post_time"] = current_time
-            
-            return top_alert['message']
-    
-    return "" # No new significant alert to report
 
 # --- Chat Command Endpoint ---
 @app.route('/command')
